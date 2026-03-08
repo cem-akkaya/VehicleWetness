@@ -6,7 +6,9 @@
 
 ## Overview
 
-Vehicle Wetness is an Unreal Engine plugin that simulates dynamic rain droplets and wetness masks for vehicles (or any other surfaces) using GPU compute shaders.
+Vehicle Wetness is an Unreal Engine plugin that simulates dynamic rain droplets and wetness masks for vehicles (or any other surfaces) using GPU compute shaders.This repository explores GPU-based droplet simulation using
+Unreal Engine compute shaders and the Render Dependency Graph. It is intended as a technical prototype rather than a production-ready rain system.
+
 
 This is a foundation-level compute shader only that can lay down the groundwork for a full-fledged solution for multiple windshields or wetness surfaces on vehicles. Currently, it does not perform additional work around mesh or UV processing, or vehicle orientation solving. However, it offers realistic physics behavior with respect to average performance targets and high-fidelity realism, complemented by multiple designer-driven properties.
 
@@ -33,6 +35,7 @@ The component generates a high-performance wetness mask that can be used in your
 3. Use this Render Target in your vehicle's material (typically as a mask for Roughness, Metallic, or Normal offsets).
 4. (Optional) To use wipers, call **Update Wiper Angle** from your Blueprint's Tick or a Timeline.
 
+ <img src="Resources/Demo2.gif" alt="plugin-vehicle-wetness" width="100%"/>
 
 ---
 
