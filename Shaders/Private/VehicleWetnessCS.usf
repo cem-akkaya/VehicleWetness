@@ -1,0 +1,305 @@
+﻿#include "/Engine/Public/Platform.ush"
+
+RWStructuredBuffer<float4> Droplets;
+RWTexture2D<float> OutputTexture;
+
+float DeltaTime;
+float TotalTime;
+float SpawnRate;
+float MaxDropletLife;
+float AverageDropletSpeed;
+float SpeedRandomness;
+float DirectionJitter;
+float DropletStartSize;
+float DropletEndSize;
+float DropletSizeRandom;
+float TrailDecay;
+float2 MoveDir;
+float VelocityInfluenceX;
+uint bNegateVelocityInfluenceX;
+float VelocityInfluenceY;
+uint bNegateVelocityInfluenceY;
+float3 VehicleVelocity;
+float DropletDelay;
+float DropletDelayMovementInfluence;
+float EdgeRadiusMultiplier;
+float2 WiperPivot;
+float WiperRadius;
+float WiperAngle;
+float WiperPreviousAngle;
+float WiperThickness;
+float WiperCentrifugalStrength;
+float WiperStickiness;
+float BlurStrength;
+
+float Hash(uint i, float offset)
+{
+	return frac(sin(float(i) * offset + TotalTime) * 43758.5453f);
+}
+
+void SpawnDroplet(uint i, inout float4 d, uint InBufferCount);
+void ProcessWiper(uint i, inout float4 d);
+void MoveDroplet(uint i, inout float4 d, float currentSize);
+float GetDropletSize(uint i, float life);
+void RenderDroplet(float2 pos, float size, float life, uint2 InTextureSize);
+
+// Spawning 
+void SpawnDroplet(uint i, inout float4 d, uint InBufferCount)
+{
+	// Reset position
+	d.xy = float2(Hash(i, 0.37f), Hash(i, 0.73f));
+	
+	// Random Speed
+	float RandS = Hash(i, 0.12f);
+	float SpeedVar = (RandS * 2.0f - 1.0f) * SpeedRandomness;
+	d.z = max(0.01f, AverageDropletSpeed + SpeedVar);
+	
+	// Reset Life with Delay
+	d.w = 1.0f + DropletDelay / max(MaxDropletLife, 0.001f); 
+}
+
+//Wiper 
+void ProcessWiper(uint i, inout float4 d)
+{
+	float2 dirToDrop = d.xy - WiperPivot;
+	float distToDrop = length(dirToDrop);
+	
+	if (distToDrop > 0.0f && distToDrop <= WiperRadius)
+	{
+		// Calculate particle angle relative to pivot
+		// Assuming standard UV where Y is down, but we can adjust
+		float dropAngle = atan2(dirToDrop.x, -dirToDrop.y); 
+		
+		float minA = min(WiperPreviousAngle, WiperAngle);
+		float maxA = max(WiperPreviousAngle, WiperAngle);
+		
+		// Handle wrap around if necessary (simplified here)
+		bool bPassedOver = (dropAngle >= minA && dropAngle <= maxA);
+		bool bTouchingEdge = abs(dropAngle - WiperAngle) < WiperThickness;
+		
+		if (bPassedOver || bTouchingEdge)
+		{
+			float pushDirection = (WiperAngle > WiperPreviousAngle) ? 1.0f : -1.0f;
+			
+			// Stickiness affects how much the droplet moves towards the leading edge
+			// 1.0 stickiness = stays at current position relative to wiper 
+			float pushAmount = 1.0f - saturate(WiperStickiness);
+			float targetAngle = WiperAngle + WiperThickness * pushDirection;
+			float currentAnglePush = lerp(dropAngle, targetAngle, pushAmount);
+			
+			float s, c;
+			sincos(currentAnglePush, s, c);
+			float2 pushDir = float2(s, -c); 
+			
+			// Centrifugal push - also affected by stickiness
+			float outwardPush = max(d.z, 0.5f) * DeltaTime * WiperCentrifugalStrength * pushAmount;
+			distToDrop = min(distToDrop + outwardPush, WiperRadius * 1.01f);
+			
+			d.xy = WiperPivot + pushDir * distToDrop;
+		}
+	}
+}
+
+// Movement 
+void MoveDroplet(uint i, inout float4 d, float currentSize)
+{
+	const bool bInDelay = d.w > 1.0f;
+	
+	// Direction Jitter
+	float2 RandDir;
+	RandDir.x = Hash(i, 0.45f) * 2.0f - 1.0f;
+	RandDir.y = Hash(i, 0.82f) * 2.0f - 1.0f;
+	float2 IndividualDir = normalize(MoveDir + RandDir * DirectionJitter);
+	
+	// Delay Multiplier
+	float MovementMultiplier = 1.0f;
+	if (bInDelay)
+	{
+		float DelayDurationInLife = DropletDelay / max(MaxDropletLife, 0.001f);
+		float NormalizedDelayProgress = saturate((d.w - 1.0f) / max(DelayDurationInLife, 0.001f));
+		MovementMultiplier = lerp(1.0f, DropletDelayMovementInfluence, NormalizedDelayProgress);
+	}
+
+	// Airflow/Velocity Influence
+	float2 AirflowPush;
+	AirflowPush.x = VehicleVelocity.y * 0.0001f * VelocityInfluenceY * (bNegateVelocityInfluenceY ? -1.0f : 1.0f);
+	AirflowPush.y = -VehicleVelocity.x * 0.0001f * VelocityInfluenceX * (bNegateVelocityInfluenceX ? -1.0f : 1.0f);
+
+	d.xy += (IndividualDir * (d.z * 0.1f) + AirflowPush) * DeltaTime * MovementMultiplier;
+	
+	// WIPER LOGIC
+	ProcessWiper(i, d);
+
+	// Edge Accumulation Logic and Radius consideration
+	// Normalized radius for UV space
+	uint2 TmpTextureSize;
+	OutputTexture.GetDimensions(TmpTextureSize.x, TmpTextureSize.y);
+	float2 normRadius = (currentSize * 0.5f * EdgeRadiusMultiplier) / float2(TmpTextureSize);
+	const float eps = 0.0001f;
+
+	// Clamp with radius padding
+	d.xy = clamp(d.xy, normRadius, 1.0f - normRadius);
+	
+	// If at edge stop movement
+	if (d.xy.x <= normRadius.x + eps || d.xy.x >= 1.0f - normRadius.x - eps || 
+		d.xy.y <= normRadius.y + eps || d.xy.y >= 1.0f - normRadius.y - eps)
+	{
+		d.z = 0;
+	}
+}
+
+// Size
+float GetDropletSize(uint i, float life)
+{
+	float RandSize = Hash(i, 0.584f);
+	float SizeVariation = (RandSize * 2.0f - 1.0f) * DropletSizeRandom;
+	
+	float CurrentStartSize = DropletStartSize * (1.0f + SizeVariation);
+	float CurrentEndSize = DropletEndSize * (1.0f + SizeVariation);
+	
+	return lerp(CurrentEndSize, CurrentStartSize, saturate(life));
+}
+
+//Rendering 
+void RenderDroplet(float2 pos, float size, float life, uint2 InTextureSize)
+{
+	const float2 floatPixelPos = pos * float2(InTextureSize) - 0.5f;
+	const int2 pixelBase = (int2)floor(floatPixelPos);
+	const float2 f = frac(floatPixelPos);
+
+	const float CurrentSizeSafe = max(size, 0.01f);
+	// Increase loop range slightly
+	const int LoopRange = (int)ceil(CurrentSizeSafe) + 1;
+
+	for (int y = -LoopRange; y <= LoopRange; ++y)
+	{
+		for (int x = -LoopRange; x <= LoopRange; ++x)
+		{
+			int2 wrappedPixel = pixelBase + int2(x, y);
+			// Boundary clipping 
+			if (wrappedPixel.x < 0 || wrappedPixel.x >= (int)InTextureSize.x || 
+				wrappedPixel.y < 0 || wrappedPixel.y >= (int)InTextureSize.y)
+			{
+				continue;
+			}
+
+			const float2 subPixelOffset = float2(x, y) - f;
+			const float distSq = dot(subPixelOffset, subPixelOffset);
+			const float sizeSq = CurrentSizeSafe * CurrentSizeSafe;
+			
+			// falloff
+			float finalWeight = 1.0f - smoothstep(0.0f, 1.0f, sqrt(distSq / sizeSq));
+			
+			// sharpen
+			if (CurrentSizeSafe < 1.0f)
+			{
+				const float weightX = (x == 0) ? (1.0f - f.x) : ((x == 1) ? f.x : 0.0f);
+				const float weightY = (y == 0) ? (1.0f - f.y) : ((y == 1) ? f.y : 0.0f);
+				finalWeight = max(finalWeight, weightX * weightY * CurrentSizeSafe);
+			}
+
+			if (finalWeight > 0.0f)
+			{
+				OutputTexture[wrappedPixel] = max(OutputTexture[wrappedPixel], saturate(life) * finalWeight);
+			}
+		}
+	}
+}
+
+[numthreads(8, 8, 1)]
+void FadeCS(uint3 DTid : SV_DispatchThreadID)
+{
+	uint2 Size;
+	OutputTexture.GetDimensions(Size.x, Size.y);
+	if (DTid.x >= Size.x || DTid.y >= Size.y) return;
+
+	OutputTexture[DTid.xy] *= pow(saturate(TrailDecay), DeltaTime * 60.0f);
+}
+
+[numthreads(64, 1, 1)]
+void MainCS(uint3 DTid : SV_DispatchThreadID)
+{
+	const uint i = DTid.x;
+	
+	uint2 MainTextureSize;
+	OutputTexture.GetDimensions(MainTextureSize.x, MainTextureSize.y);
+
+	const uint BufferCount = 4096;
+	if (i >= BufferCount) return;
+	
+	float4 d = Droplets[i];
+	
+	// Decay
+	d.w -= DeltaTime / max(MaxDropletLife, 0.001f);
+	
+	// Spawn
+	{
+		// and use the current particle's index to see if its within the spawn range.
+		float ParticlesToSpawn = SpawnRate * DeltaTime;
+		uint SpawnCount = (uint)floor(ParticlesToSpawn);
+		float FractionalSpawn = frac(ParticlesToSpawn);
+		
+		if (Hash(i, 0.912f) < FractionalSpawn)
+		{
+			SpawnCount++;
+		}
+		
+		// Cycle
+		uint StartIndex = (uint)(TotalTime * SpawnRate) % BufferCount;
+		
+
+		bool bShouldSpawn = false;
+		if (SpawnCount > 0)
+		{
+			if (StartIndex + SpawnCount <= BufferCount)
+			{
+				bShouldSpawn = (i >= StartIndex && i < StartIndex + SpawnCount);
+			}
+			else
+			{
+				// Wrap around case
+				bShouldSpawn = (i >= StartIndex || i < (StartIndex + SpawnCount) % BufferCount);
+			}
+		}
+
+		if (bShouldSpawn)
+		{
+			SpawnDroplet(i, d, BufferCount);
+		}
+	}
+	
+	// Move Scale Render
+	if (d.w > 0.0f)
+	{
+		float currentSize = GetDropletSize(i, d.w);
+		MoveDroplet(i, d, currentSize);
+		RenderDroplet(d.xy, currentSize, d.w, MainTextureSize);
+	}
+	
+	Droplets[i] = d;
+}
+
+[numthreads(8, 8, 1)]
+void BlurCS(uint3 DTid : SV_DispatchThreadID)
+{
+	uint2 Size;
+	OutputTexture.GetDimensions(Size.x, Size.y);
+	if (DTid.x >= Size.x || DTid.y >= Size.y) return;
+
+	float sum = 0;
+	float weightSum = 0;
+	
+	for (int y = -1; y <= 1; ++y)
+	{
+		for (int x = -1; x <= 1; ++x)
+		{
+			int2 coord = clamp(int2(DTid.xy) + int2(x, y), int2(0, 0), int2(Size) - 1);
+			float weight = 1.0f / (1.0f + float(x * x + y * y));
+			sum += OutputTexture[coord] * weight;
+			weightSum += weight;
+		}
+	}
+
+	float blurred = sum / weightSum;
+	OutputTexture[DTid.xy] = lerp(OutputTexture[DTid.xy], blurred, saturate(BlurStrength));
+}
