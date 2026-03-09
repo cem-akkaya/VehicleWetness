@@ -1,4 +1,6 @@
-﻿#include "VehicleWetnessCS.h"
+﻿// Vehicle Wetness System. Cem Akkaya https://www.cemakkaya.com
+
+#include "VehicleWetnessCS.h"
 #include "RenderGraphUtils.h"
 #include "ShaderCompilerCore.h"
 

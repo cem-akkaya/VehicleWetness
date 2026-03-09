@@ -1,4 +1,6 @@
-﻿#include "/Engine/Public/Platform.ush"
+﻿// Vehicle Wetness System. Cem Akkaya https://www.cemakkaya.com
+
+#include "/Engine/Public/Platform.ush"
 
 RWStructuredBuffer<float4> Droplets;
 RWTexture2D<float> OutputTexture;

@@ -1,4 +1,6 @@
-﻿#include "VehicleWetnessComponent.h"
+﻿// Vehicle Wetness System. Cem Akkaya https://www.cemakkaya.com
+
+#include "VehicleWetnessComponent.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "VehicleWetnessCS.h"

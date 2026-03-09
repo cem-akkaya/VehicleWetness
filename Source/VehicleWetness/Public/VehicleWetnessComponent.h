@@ -1,4 +1,6 @@
-﻿#pragma once
+﻿// Vehicle Wetness System. Cem Akkaya https://www.cemakkaya.com
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"

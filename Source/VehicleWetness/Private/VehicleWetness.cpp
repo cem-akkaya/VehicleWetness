@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Vehicle Wetness System. Cem Akkaya https://www.cemakkaya.com
 
 #include "VehicleWetness.h"
 
